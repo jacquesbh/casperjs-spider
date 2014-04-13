@@ -1,0 +1,1 @@
+casperjs --start-url=http://payline.dev --login-url="https://payline.dev/customer/account/login" --login-user="foo@bar.com" --login-pass="yoman" --required-values=payline.dev --skipped-values="form_key,?,#,logout,tagId" --ignore-ssl-errors=yes spider.js
