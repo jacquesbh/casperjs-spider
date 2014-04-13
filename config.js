@@ -27,7 +27,7 @@ var config = (function(window,document,undefined){
   config.logLevel = 'error';
 
   // prevent loading of images for speed
-  config.loadImages = false;
+  config.loadImages = true;
 
   // prevent loading Flash, Silverlight from crawler
   config.loadPlugins = false;
