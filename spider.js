@@ -37,7 +37,13 @@
   // ##################  Initializing Vars  #################
 
   // URL arrays
-  var visitedUrls = [], pendingUrls = [], skippedUrls = [];
+  var visitedUrls = [], pendingUrls = [], skippedUrls = [], visitedPages = [];
+  var resetUrls = function () {
+    visitedUrls  = [];
+    pendingUrls  = [];
+    skippedUrls  = [];
+    visitedPages = [];
+  };
 
   // required and skipped values
   var requiredValues = casper.cli.get('required-values') || config.requiredValues,
@@ -69,7 +75,7 @@
 
   // ##################  Spider Function  #################
 
-  var spider = function(url) {
+  var spider = function(casper, url, logged) {
 
     // Add the URL to visited stack
     visitedUrls.push(url);
@@ -82,8 +88,17 @@
       // Get current response status of URL
       var status = this.status().currentHTTPStatus;
 
-      // Log url
-      this.echo(this.colorizer.format(status, helpers.statusColor(status)) + ' ' + url);
+      // Keep the body class
+      var body_class = this.evaluate(function () {
+        var classes = document.body.className.split(' ');
+        var found_class = null;
+        for (var i = 0; i < classes.length; i++) {
+          if (!found_class && classes[i].length) {
+            found_class = classes[i];
+          }
+        }
+        return found_class;
+      });
 
       // Instantiate link object for log
       var link = {
@@ -94,62 +109,78 @@
       // Push links to dataObj
       dataObj.links.push(link);
 
-
       // ##################  Process Links on Page  #################
 
-      var baseUrl = this.getGlobal('location').origin;
+      if (visitedPages.indexOf(body_class) === -1) {
 
-      // Find links on the current page
-      var localLinks = this.evaluate(function() {
-        var links = [];
-        __utils__.findAll('a[href]').forEach(function(e) {
-          links.push(e.getAttribute('href'));
+        // Log url
+        this.echo(this.colorizer.format(status, helpers.statusColor(status)) + (logged ? ' (logged)' : '') + ' ' + url);
+
+        // Screen the page
+        // var filename = url.replace(/https?:\/\//, '').replace(/\//g, '_').replace(/_$/, '') + '.png';
+        var filename = body_class + (logged ? '_logged' : '') + '.png';
+        casper.capture('captures/' + filename);
+
+        // Push body class in list
+        visitedPages.push(body_class);
+
+        var baseUrl = this.getGlobal('location').origin;
+
+        // Find links on the current page
+        var localLinks = this.evaluate(function() {
+          var links = [];
+          __utils__.findAll('a[href]').forEach(function(e) {
+            links.push(e.getAttribute('href'));
+          });
+          return links;
         });
-        return links;
-      });
 
-      // iterate through each localLink
-      this.each(localLinks, function(self, link) {
+        // iterate through each localLink
+        this.each(localLinks, function(self, link) {
 
-        // if url contains text
-        var containsText = function (element, index, array) {
-          return (newUrl.indexOf(array[index]) >= 0);
-        };
+          // if url contains text
+          var containsText = function (element, index, array) {
+            return (newUrl.indexOf(array[index]) >= 0);
+          };
 
-        // Get new url
-        var newUrl = helpers.absoluteUri(baseUrl, link);
+          // Get new url
+          var newUrl = helpers.absoluteUri(baseUrl, link);
 
-        // If url is not visited, pending or skipped:
-        if (pendingUrls.indexOf(newUrl) === -1 &&
-            visitedUrls.indexOf(newUrl) === -1 &&
-            skippedUrls.indexOf(newUrl) === -1) {
+          // If url is not visited, pending or skipped:
+          if (pendingUrls.indexOf(newUrl) === -1 &&
+              visitedUrls.indexOf(newUrl) === -1 &&
+              skippedUrls.indexOf(newUrl) === -1) {
 
-          // if newUrl is not does not contain skipped, and does have required
-          if (!dataObj.skippedValues.some(containsText) &&
-              dataObj.requiredValues.every(containsText)) {
+            // if newUrl is not does not contain skipped, and does have required
+            if (!dataObj.skippedValues.some(containsText) &&
+                dataObj.requiredValues.every(containsText)) {
 
-            pendingUrls.push(newUrl);
+              pendingUrls.push(newUrl);
 
-          } else {
+            } else {
 
-            // add it to skipped array
-            skippedUrls.push(newUrl);
+              // add it to skipped array
+              skippedUrls.push(newUrl);
 
-            casper.log('Skipping ' + newUrl, 'debug');
+              casper.log('Skipping ' + newUrl, 'debug');
 
-            // add to counted skipped links
-            dataObj.skippedLinksCount++;
+              // add to counted skipped links
+              dataObj.skippedLinksCount++;
 
-            return;
-          }
-        } // eof visited, pending, skipped
-      }); // eof each links
+              return;
+            }
+          } // eof visited, pending, skipped
+        }); // eof each links
+
+      } else {
+        this.echo('Skip page ' + body_class + ' (' + url + ')');
+      }
 
       // If there are any more URLs, run again.
       if (pendingUrls.length > 0 && dataObj.linkCount < linkLimit) {
         var nextUrl = pendingUrls.shift();
         dataObj.linkCount++;
-        spider(nextUrl);
+        spider(this, nextUrl, logged);
       } else {
         casper.log('There are no more URLs to be processed!', 'Warning');
       }
@@ -160,7 +191,20 @@
   // Start Spidering!
   casper.start(dataObj.start, function() {
     this.log('Starting to spider ' + dataObj.start, 'info');
-    spider(dataObj.start);
+    spider(this, dataObj.start, false);
+  })
+
+  .thenOpen(casper.cli.get('login-url'), function () {
+      this.fill('form#login-form', {
+        'login[username]': casper.cli.get('login-user'),
+        'login[password]': casper.cli.get('login-pass')
+      }, true);
+  })
+
+  .then(function () {
+    this.log('Continue to spider ' + dataObj.start + ' as a logged customer', 'info');
+    resetUrls();
+    spider(this, dataObj.start, true);
   });
 
   casper.run();
